@@ -33,8 +33,11 @@ GRID_ROUNDS=200
 # FedProx and FedAdam use the FedAvg client learning rate SGD_LR on the clients.
 best_settings() {
   case $1 in
-    femnist) SGD_LR="";  MOM_LR="";    ADAM_SERVER_LR=""; PROX_MU="" ;;
-    cifar)   SGD_LR="";  MOM_LR=0.01;  ADAM_SERVER_LR=""; PROX_MU="" ;;   # momentum: 0.01 best, 0.03 diverged
+    # tune: FedAvg lr 0.01/0.03/0.1/0.3 -> FEMNIST 61.6/75.2/80.6/81.6, CIFAR 52.2/58.0/61.6/58.3
+    #       momentum lr 0.003/0.01/0.03/0.1 -> FEMNIST 72.0/79.4/82.1/81.1, CIFAR 56.2/63.4/diverged
+    #       (best momentum lr x 10 = best FedAvg lr on both datasets: same effective step size)
+    femnist) SGD_LR=0.3; MOM_LR=0.03; ADAM_SERVER_LR=""; PROX_MU="" ;;
+    cifar)   SGD_LR=0.1; MOM_LR=0.01; ADAM_SERVER_LR=""; PROX_MU="" ;;
   esac
 }
 
