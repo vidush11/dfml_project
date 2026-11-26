@@ -14,9 +14,11 @@ federated optimization (FedAvg, client momentum, FedProx, FedAdam) under non-IID
 ## Running
 ```bash
 pip install -r requirements.txt          # install PyTorch for your CUDA version first
-./run_experiments.sh tune                # 1. learning rates and FedProx mu (seed 11)
-#    open summary.ipynb, section 1, and copy the best values into best_settings() in run_experiments.sh
-./run_experiments.sh grid                # 2. 4 methods x {alpha 0.1, 0.5, 100, 1 class per client} x 3 seeds x 2 datasets
+./run_experiments.sh tune                # 1. client learning rates of FedAvg and FedAvg + momentum (seed 11)
+#    summary.ipynb section 1 -> fill SGD_LR and MOM_LR in best_settings() in run_experiments.sh
+./run_experiments.sh tune2               # 2. FedAdam server lr and FedProx mu, using the FedAvg client lr SGD_LR
+#    summary.ipynb section 1 -> fill ADAM_SERVER_LR and PROX_MU
+./run_experiments.sh grid                # 3. 4 methods x {alpha 0.1, 0.5, 100, 1 class per client} x 3 seeds x 2 datasets
 #    open summary.ipynb for the tables and figures (saved to results/figures/)
 ```
 `JOBS=4 ./run_experiments.sh grid` runs 4 experiments at the same time on one GPU (give the job about 2 CPU cores per run).

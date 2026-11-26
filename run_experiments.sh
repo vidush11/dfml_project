@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Runs the experiments by executing the notebooks with papermill.
 #
-#   ./run_experiments.sh tune    step 1: learning rates (alpha=0.5) and FedProx mu (alpha=0.1), seed 11 only
-#   ./run_experiments.sh grid    step 2: 4 methods x 4 data settings x 3 seeds on both datasets, using best_settings()
+#   ./run_experiments.sh tune    step 1: client learning rate of FedAvg and FedAvg + momentum (alpha=0.5, seed 11)
+#                                -> fill SGD_LR and MOM_LR in best_settings()
+#   ./run_experiments.sh tune2   step 2: FedAdam server lr (alpha=0.5) and FedProx mu (alpha=0.1), both with the
+#                                FedAvg client lr SGD_LR from step 1 -> fill ADAM_SERVER_LR and PROX_MU
+#   ./run_experiments.sh grid    step 3: 4 methods x 4 data settings x 3 seeds on both datasets
 #
 # Each run writes results/<name>.json (+ .pt), its executed notebook runs/<name>.ipynb and its output runs/<name>.log.
 # Finished runs are skipped, so the script can simply be restarted after an interruption.
@@ -26,13 +29,21 @@ LOCAL_STEPS=50
 TUNE_ROUNDS=50
 GRID_ROUNDS=200
 
-# Fill these in after the tune stage (see section 1 of summary.ipynb).
-# FedProx and FedAdam use the SGD learning rate on the clients.
+# Best values from the tuning steps (see section 1 of summary.ipynb). Empty = not chosen yet.
+# FedProx and FedAdam use the FedAvg client learning rate SGD_LR on the clients.
 best_settings() {
   case $1 in
-    femnist) SGD_LR=0.03; MOM_LR=0.01; ADAM_SERVER_LR=0.01; PROX_MU=0.01 ;;
-    cifar)   SGD_LR=0.03; MOM_LR=0.01; ADAM_SERVER_LR=0.01; PROX_MU=0.01 ;;
+    femnist) SGD_LR="";  MOM_LR="";    ADAM_SERVER_LR=""; PROX_MU="" ;;
+    cifar)   SGD_LR="";  MOM_LR=0.01;  ADAM_SERVER_LR=""; PROX_MU="" ;;   # momentum: 0.01 best, 0.03 diverged
   esac
+}
+
+# stop with a clear message if a value in best_settings() is still empty
+require() {
+  local dataset=$1; shift
+  for v in "$@"; do
+    if [ -z "${!v}" ]; then echo "Fill in $v for $dataset in best_settings() first."; exit 1; fi
+  done
 }
 
 notebook_for() {
@@ -83,12 +94,29 @@ fi
 case "${1:-}" in
   tune)
     for d in $DATASETS; do
-      for lr  in 0.01 0.03 0.1;        do run "$d" tune alpha0.5 sgd          sgd  "$lr" 0.01   0.01  11 $TUNE_ROUNDS; done  # FedAvg
-      for lr  in 0.003 0.01 0.03;      do run "$d" tune alpha0.5 sgd_momentum sgd  "$lr" 0.01   0.01  11 $TUNE_ROUNDS; done  # FedAvg + momentum
-      for slr in 0.003 0.01 0.03 0.1;  do run "$d" tune alpha0.5 sgd          adam 0.03  "$slr" 0.01  11 $TUNE_ROUNDS; done  # FedAdam
-      for mu  in 0.001 0.01 0.1;       do run "$d" tune alpha0.1 fedprox      sgd  0.03  0.01   "$mu" 11 $TUNE_ROUNDS; done  # FedProx
+      for lr in 0.01 0.03 0.1 0.3; do
+        run "$d" tune alpha0.5 sgd sgd "$lr" 0.01 0.01 11 $TUNE_ROUNDS                  # FedAvg
+      done
+      case $d in
+        femnist) MOM_LRS="0.003 0.01 0.03 0.1" ;;
+        cifar)   MOM_LRS="0.003 0.01 0.03" ;;                                           # 0.03 already diverges
+      esac
+      for lr in $MOM_LRS; do
+        run "$d" tune alpha0.5 sgd_momentum sgd "$lr" 0.01 0.01 11 $TUNE_ROUNDS         # FedAvg + momentum
+      done
+    done ;;
+  tune2)
+    for d in $DATASETS; do
+      best_settings "$d"; require "$d" SGD_LR
+      for slr in 0.003 0.01 0.03 0.1; do
+        run "$d" tune alpha0.5 sgd adam "$SGD_LR" "$slr" 0.01 11 $TUNE_ROUNDS           # FedAdam
+      done
+      for mu in 0.001 0.01 0.1 1; do
+        run "$d" tune alpha0.1 fedprox sgd "$SGD_LR" 0.01 "$mu" 11 $TUNE_ROUNDS         # FedProx
+      done
     done ;;
   grid)
+    for d in $DATASETS; do best_settings "$d"; require "$d" SGD_LR MOM_LR ADAM_SERVER_LR PROX_MU; done
     for seed in $SEEDS; do            # seeds outermost: after the first pass you already have one full picture
       for d in $DATASETS; do
         best_settings "$d"
@@ -101,7 +129,7 @@ case "${1:-}" in
       done
     done ;;
   *)
-    echo "usage: $0 tune|grid"; exit 1 ;;
+    echo "usage: $0 tune|tune2|grid"; exit 1 ;;
 esac
 
 wait || true      # let the last runs finish
