@@ -1,2 +1,24 @@
 # dfml_project
-This repository contains the code for the course project of DFML (CSE665A)
+Course project for Distributed and Federated Machine Learning (CSE665A, IIIT Delhi):
+federated optimization (FedAvg, client momentum, FedProx, FedAdam) under non-IID client data on FEMNIST and CIFAR-10.
+
+## Layout
+- `dfml-project-new.ipynb`: FEMNIST (Dirichlet partitioning, `client` / `server` classes, training)
+- `dfml-project-cifar.ipynb`: CIFAR-10, same code with a 3-block CNN with GroupNorm
+- `run_experiments.sh`: runs the notebooks with papermill for every setting
+- `summary.ipynb`: tables (mean ± std over seeds) and figures from `results/`
+- `results/`: one `<run>.json` per run (config, test accuracy/loss, train loss, client drift, time per round)
+- `runs/`: executed notebook of every run (logs, not committed)
+- `paper/`: LaTeX source of the report
+
+## Running
+```bash
+pip install -r requirements.txt          # install PyTorch for your CUDA version first
+./run_experiments.sh tune                # 1. learning rates and FedProx mu (seed 11)
+#    open summary.ipynb, section 1, and copy the best values into best_settings() in run_experiments.sh
+./run_experiments.sh grid                # 2. 4 methods x {alpha 0.1, 0.5, 100, 1 class per client} x 3 seeds x 2 datasets
+#    open summary.ipynb for the tables and figures (saved to results/figures/)
+```
+`JOBS=4 ./run_experiments.sh grid` runs 4 experiments at the same time on one GPU (give the job about 2 CPU cores per run).
+`DRY_RUN=1 ./run_experiments.sh grid` lists the runs without starting them. Finished runs are skipped, so an interrupted
+script can simply be started again. A single notebook can also be run by hand: edit the parameters cell at the top.

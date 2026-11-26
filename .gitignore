@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Jupyter autosaves
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+
+# LaTeX build files
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.bbl
+paper/*.blg
+paper/*.synctex.gz
+paper/*.fdb_latexmk
+paper/*.fls
+
+# experiment outputs: model weights and executed notebooks (logs) stay local; results/*.json is committed
+results/*.pt
+runs/
