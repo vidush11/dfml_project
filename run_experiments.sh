@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Runs the experiments by executing the notebooks with papermill.
 #
-#   ./run_experiments.sh tune    step 1: client learning rate of FedAvg and FedAvg + momentum (alpha=0.5, seed 11)
+#   ./run_experiments.sh tune    step 1: client learning rate of FedAvg and FedAvg + momentum
 #                                -> fill SGD_LR and MOM_LR in best_settings()
-#   ./run_experiments.sh tune2   step 2: FedAdam server lr (alpha=0.5) and FedProx mu (alpha=0.1), both with the
-#                                FedAvg client lr SGD_LR from step 1 -> fill ADAM_SERVER_LR and PROX_MU
+#   ./run_experiments.sh tune2   step 2: every method gets its own client learning rate, tuned jointly with its
+#                                own setting: FedAdam client lr x server lr, FedProx client lr x mu
+#                                -> fill ADAM_CLIENT_LR, ADAM_SERVER_LR, PROX_LR and PROX_MU
 #   ./run_experiments.sh grid    step 3: 4 methods x 4 data settings x 3 seeds on both datasets
+#
+# Tuning uses seed 11 and runs every configuration at alpha=0.5 AND alpha=0.1. Each gets its own best values
+# (summary.ipynb, section 1): "mild" = best at alpha=0.5, used for alpha0.5 and alpha100;
+#                             "strong" = best at alpha=0.1, used for alpha0.1 and c1.
 #
 # Each run writes results/<name>.json (+ .pt), its executed notebook runs/<name>.ipynb and its output runs/<name>.log.
 # Finished runs are skipped, so the script can simply be restarted after an interruption.
@@ -28,24 +33,35 @@ SETTINGS="alpha0.1 alpha0.5 alpha100 c1"
 LOCAL_STEPS=50
 TUNE_ROUNDS=50
 GRID_ROUNDS=200
+CLIENT_LRS="0.01 0.03 0.1 0.3"     # client learning rates tried for FedAvg, FedProx and FedAdam
+TUNE_SETTINGS="alpha0.1 alpha0.5"  # every tuning configuration runs on both
+
+# which tuned values a data setting uses
+regime() {
+  case $1 in
+    alpha0.5|alpha100) echo mild ;;     # tuned at alpha=0.5
+    alpha0.1|c1)       echo strong ;;   # tuned at alpha=0.1
+  esac
+}
 
 # Best values from the tuning steps (see section 1 of summary.ipynb). Empty = not chosen yet.
-# FedProx and FedAdam use the FedAvg client learning rate SGD_LR on the clients.
-best_settings() {
-  case $1 in
-    # tune: FedAvg lr 0.01/0.03/0.1/0.3 -> FEMNIST 61.6/75.2/80.6/81.6, CIFAR 52.2/58.0/61.6/58.3
-    #       momentum lr 0.003/0.01/0.03/0.1 -> FEMNIST 72.0/79.4/82.1/81.1, CIFAR 56.2/63.4/diverged
-    #       (best momentum lr x 10 = best FedAvg lr on both datasets: same effective step size)
-    femnist) SGD_LR=0.3; MOM_LR=0.03; ADAM_SERVER_LR=""; PROX_MU="" ;;
-    cifar)   SGD_LR=0.1; MOM_LR=0.01; ADAM_SERVER_LR=""; PROX_MU="" ;;
+# Every method has its own client learning rate.
+best_settings() {   # best_settings <dataset> <mild|strong>
+  case "$1 $2" in
+    # alpha=0.5: FedAvg lr 0.01/0.03/0.1/0.3 -> FEMNIST 61.6/75.2/80.6/81.6, CIFAR 52.2/58.0/61.6/58.3
+    #            momentum lr 0.003/0.01/0.03/0.1 -> FEMNIST 72.0/79.4/82.1/81.1, CIFAR 56.2/63.4/diverged
+    "femnist mild")   SGD_LR=0.3; MOM_LR=0.03; PROX_LR=""; PROX_MU=""; ADAM_CLIENT_LR=""; ADAM_SERVER_LR="" ;;
+    "femnist strong") SGD_LR="";  MOM_LR="";   PROX_LR=""; PROX_MU=""; ADAM_CLIENT_LR=""; ADAM_SERVER_LR="" ;;
+    "cifar mild")     SGD_LR=0.1; MOM_LR=0.01; PROX_LR=""; PROX_MU=""; ADAM_CLIENT_LR=""; ADAM_SERVER_LR="" ;;
+    "cifar strong")   SGD_LR="";  MOM_LR="";   PROX_LR=""; PROX_MU=""; ADAM_CLIENT_LR=""; ADAM_SERVER_LR="" ;;
   esac
 }
 
 # stop with a clear message if a value in best_settings() is still empty
 require() {
-  local dataset=$1; shift
+  local where=$1; shift
   for v in "$@"; do
-    if [ -z "${!v}" ]; then echo "Fill in $v for $dataset in best_settings() first."; exit 1; fi
+    if [ -z "${!v}" ]; then echo "Fill in $v for \"$where\" in best_settings() first."; exit 1; fi
   done
 }
 
@@ -97,37 +113,46 @@ fi
 case "${1:-}" in
   tune)
     for d in $DATASETS; do
-      for lr in 0.01 0.03 0.1 0.3; do
-        run "$d" tune alpha0.5 sgd sgd "$lr" 0.01 0.01 11 $TUNE_ROUNDS                  # FedAvg
-      done
       case $d in
         femnist) MOM_LRS="0.003 0.01 0.03 0.1" ;;
         cifar)   MOM_LRS="0.003 0.01 0.03" ;;                                           # 0.03 already diverges
       esac
-      for lr in $MOM_LRS; do
-        run "$d" tune alpha0.5 sgd_momentum sgd "$lr" 0.01 0.01 11 $TUNE_ROUNDS         # FedAvg + momentum
+      for s in $TUNE_SETTINGS; do
+        for lr in $CLIENT_LRS; do
+          run "$d" tune "$s" sgd sgd "$lr" 0.01 0.01 11 $TUNE_ROUNDS                    # FedAvg
+        done
+        for lr in $MOM_LRS; do
+          run "$d" tune "$s" sgd_momentum sgd "$lr" 0.01 0.01 11 $TUNE_ROUNDS           # FedAvg + momentum
+        done
       done
     done ;;
   tune2)
     for d in $DATASETS; do
-      best_settings "$d"; require "$d" SGD_LR
-      for slr in 0.003 0.01 0.03 0.1; do
-        run "$d" tune alpha0.5 sgd adam "$SGD_LR" "$slr" 0.01 11 $TUNE_ROUNDS           # FedAdam
-      done
-      for mu in 0.001 0.01 0.1 1; do
-        run "$d" tune alpha0.1 fedprox sgd "$SGD_LR" 0.01 "$mu" 11 $TUNE_ROUNDS         # FedProx
+      for s in $TUNE_SETTINGS; do
+        for clr in $CLIENT_LRS; do
+          for slr in 0.003 0.01 0.03 0.1; do
+            run "$d" tune "$s" sgd adam "$clr" "$slr" 0.01 11 $TUNE_ROUNDS              # FedAdam
+          done
+          for mu in 0.001 0.01 0.1 1; do
+            run "$d" tune "$s" fedprox sgd "$clr" 0.01 "$mu" 11 $TUNE_ROUNDS            # FedProx
+          done
+        done
       done
     done ;;
   grid)
-    for d in $DATASETS; do best_settings "$d"; require "$d" SGD_LR MOM_LR ADAM_SERVER_LR PROX_MU; done
+    for d in $DATASETS; do
+      for r in mild strong; do
+        best_settings "$d" "$r"; require "$d $r" SGD_LR MOM_LR PROX_LR PROX_MU ADAM_CLIENT_LR ADAM_SERVER_LR
+      done
+    done
     for seed in $SEEDS; do            # seeds outermost: after the first pass you already have one full picture
       for d in $DATASETS; do
-        best_settings "$d"
         for s in $SETTINGS; do
+          best_settings "$d" "$(regime "$s")"
           run "$d" grid "$s" sgd          sgd  "$SGD_LR" 0.01              0.01       "$seed" $GRID_ROUNDS  # FedAvg
           run "$d" grid "$s" sgd_momentum sgd  "$MOM_LR" 0.01              0.01       "$seed" $GRID_ROUNDS  # FedAvg + momentum
-          run "$d" grid "$s" fedprox      sgd  "$SGD_LR" 0.01              "$PROX_MU" "$seed" $GRID_ROUNDS  # FedProx
-          run "$d" grid "$s" sgd          adam "$SGD_LR" "$ADAM_SERVER_LR" 0.01       "$seed" $GRID_ROUNDS  # FedAdam
+          run "$d" grid "$s" fedprox      sgd  "$PROX_LR"        0.01              "$PROX_MU" "$seed" $GRID_ROUNDS  # FedProx
+          run "$d" grid "$s" sgd          adam "$ADAM_CLIENT_LR" "$ADAM_SERVER_LR" 0.01       "$seed" $GRID_ROUNDS  # FedAdam
         done
       done
     done ;;
