@@ -1,0 +1,69 @@
+WHAT DIDN'T WORK: TUNING FAILURES
+=================================
+
+Setup for all tuning runs: seed 11, 50 rounds, 10 clients, 50 local steps per round, batch 64.
+Accuracy = mean test accuracy over the last 5 rounds, unless marked "(final round)".
+"Diverged" = accuracy fell to chance level, i.e. the model predicts a single class:
+about 4.8% on FEMNIST (the share of its most common class, "0") and 10% on CIFAR-10.
+The losses have not been checked for NaN.
+
+
+FAILED RUNS
+-----------
+
+F1  FEMNIST, FedProx (mu = 0.001, 0.01, 0.1, 1), client lr 0.3, alpha = 0.1
+    Result:  4.8% for every mu (diverged)
+    Works:   client lr 0.03 -> 68.3-69.1%
+
+F2  FEMNIST, FedAvg, client lr 0.3, alpha = 0.1
+    Result:  worst of the 4 learning rates (consistent with F1)
+    Works:   client lr 0.1 -> 76.9%; and at alpha = 0.5, lr 0.3 is the BEST (81.5%)
+
+F3  FEMNIST, FedAdam, client lr 0.3, alpha = 0.5, server lr 0.003
+    Result:  5.1% (diverged)
+    Works:   client lr 0.03 -> 66.6% (final round)
+
+F4  FEMNIST, FedAdam, client lr 0.3, alpha = 0.5, server lr 0.1
+    Result:  4.8% (diverged)
+    Works:   client lr 0.03 -> 79.7%
+
+F5  FEMNIST, FedAdam, client lr 0.3, alpha = 0.5, server lr 0.01 / 0.03
+    Result:  62.9% / 72.9% (final round), clearly worse
+    Works:   client lr 0.03 -> 77.4% / 81.5%
+
+F6  CIFAR-10, FedAdam, client lr 0.1, alpha = 0.5, all server lrs (0.003, 0.01, 0.03, 0.1)
+    Result:  10.0% for all four (diverged)
+    Works:   client lr 0.03 -> up to 57.0%
+
+F7  CIFAR-10, FedAvg + momentum, lr 0.03, alpha = 0.5
+    Result:  10.0% (diverged)
+    Works:   lr 0.01 -> 62.4%
+
+F8  FEMNIST, FedProx, client lr 0.3, mu 0.1, alpha = 0.5, GRID run seed 11 (200 rounds, Apple MPS)
+    Result:  loss NaN from round 2, 4.8% (diverged). The same seed reached 82.4% in tuning (CUDA),
+             so the difference comes from GPU arithmetic, not the data split.
+    Works:   seeds 12 and 13 with the same values -> 85.4% / 85.0%
+    Shows:   the tuned lr 0.3 lies at the edge of stability; tuning on one seed hides this.
+
+
+WHAT THESE SHOW
+---------------
+
+1. A learning rate that is best under mild skew can diverge under strong skew (F1, F2).
+   On FEMNIST, FedAvg's best client lr falls from 0.3 at alpha = 0.5 to 0.1 at alpha = 0.1.
+   We therefore tune separately for mild (alpha = 0.5) and strong (alpha = 0.1) heterogeneity.
+
+2. FedAdam needs a smaller client learning rate than FedAvg (F3-F6).
+   With FedAvg's best client lr, FedAdam diverges or underperforms on both datasets;
+   with client lr 0.03 it matches FedAvg (81.5% on FEMNIST).
+   Hypothesis: Adam's epsilon = 1e-3 damps small, noisy coordinates only when client updates
+   are small. With large updates, every coordinate moves by about +-server lr, a noisy
+   sign-like step. As in Reddi et al. (2021), FedAdam's client and server learning rates
+   must be tuned jointly.
+
+3. Momentum's stable range is narrower on CIFAR-10 (F7).
+   With momentum 0.9, lr 0.03 means an effective step of about 0.3, which exceeds
+   CIFAR's best FedAvg rate of 0.1.
+
+
+TO DO: add any new failures from tune2 (e.g. mu = 1, client lr 0.3).
